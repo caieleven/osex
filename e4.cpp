@@ -1,9 +1,10 @@
 /*
  * @Author: Baorun Chen
  * @Date: 2022-01-04 20:36:44
- * @LastEditTime: 2022-01-07 09:00:21
+ * @LastEditTime: 2022-01-14 08:59:24
  * @Description: OS2  实验4 文件管理系统
  */
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <set>
@@ -12,31 +13,34 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+std::string base = "D:\\codefile\\cpp_code\\homework\\os\\file\\";
+
 class Attributes
 {
 public:
-    Attributes(std::string &filename, int permissions) : perm(permissions)
+    Attributes(std::string &username, std::string &filename, int permissions) : perm(permissions)
     {
-        std::string base = "D:\\codefile\\cpp_code\\homework\\os\\file\\";
-        path = base + filename;
-        datasize = 0;
+        path = base + username + "\\" + filename;
         //datasize大小计算待补充
+    }
+    Attributes()
+    {
     }
     Attributes(const Attributes &Att)
     {
         this->path = Att.path;
         this->perm = Att.perm;
-        this->datasize = Att.datasize;
     }
 
 public:
     std::string path;
-    int datasize;
     //文件权限 与Linux相同---rwx=1-2-4
+    //暂时只支持1, 2, 3
     int perm;
 };
 
-typedef std::pair<std::string, FILE *> StreamAtt;
+typedef std::pair<std::string, std::fstream *> StreamAtt; //mode + stream
 
 class UFD
 {
@@ -47,24 +51,72 @@ public:
     }
     /**
      * @brief 通过检查mode(欲打开方式)与文件权限是否匹配,若匹配,得到文件读写句柄
+     *       注意：前提是文件已经存在
      * @param filename 文件名
-     * @param mode 打开文件的方式
+     * @param mode 打开文件的方式,可能被修改，修改后为当前返回的流对象支持的方式
      * @param stream 文件的读写句柄,是调用者想要得到的信息
      * @return 是否成功
      */
-    bool GetStream(std::string &filename, std::string &mode, FILE *&stream);
-    bool CreateNewFile(std::string &filename, std::string &mode, int permission, FILE *&stream);
+    bool GetStream(std::string &filename, std::string &mode, std::fstream *&stream);
+    bool CreateNewFile(std::string &username, std::string &filename, std::string &mode, int permission, std::fstream *&stream);
     bool DeleteFile(std::string &filename);
+    void Insert(std::string &username, std::string &filename, int permission);
 
 private:
-    //std::set<std::string> file_set_;
-    std::unordered_map<std::string, Attributes> file_map_;
+    std::unordered_map<std::string, Attributes> file_map_; //文件名+文件属性
 };
 
-bool UFD::GetStream(std::string &filename, std::string &mode, FILE *&stream)
+bool UFD::GetStream(std::string &filename, std::string &mode, std::fstream *&stream)
+{
+    //初始化为空
+    stream = nullptr;
+    Attributes attb = file_map_[filename];
+    if (mode == "open")
+    {
+        if (attb.perm == 1)
+            mode = "r";
+        else if (attb.perm == 2)
+            mode = "w";
+        else
+            mode = "rw";
+    }
+    if (mode == "r" && attb.perm != 2)
+        stream = new std::fstream(attb.path, std::ios::in);
+    else if (mode == "w" && attb.perm >= 2)
+        stream = new std::fstream(attb.path, std::ios::out);
+    else if (mode == "rw" && attb.perm == 3)
+        stream = new std::fstream(attb.path, std::ios::in | std::ios::out);
+    else if (mode == "a" && attb.perm >= 2)
+    {
+        stream = new std::fstream(attb.path, std::ios::out);
+        stream->seekp(0, std::ios::end);
+    }
+    if (stream != nullptr)
+        return true;
+    return false;
+}
+
+bool UFD::CreateNewFile(std::string &username, std::string &filename, std::string &mode, int permission, std::fstream *&stream)
 {
     stream = nullptr;
-    stream = fopen(file_map_.at(filename).path.c_str(), mode.c_str());
+    //加入到当前ufd中
+    // Attributes att(username, filename, permission);
+    // file_map_.insert({filename, att});
+    this->Insert(username, filename, permission);
+    //新建文件
+    std::fstream newstream(file_map_[filename].path, std::ios::out);
+    newstream.close();
+    //将此更改写入对应用户的配置文件
+    newstream.open(base + username + "\\" + "file.config", std::ios::app);
+    newstream << filename << "\t" << permission << std::endl;
+    newstream.close();
+    //获取stream，并修改mode
+    mode = "open";
+    this->GetStream(filename, mode, stream);
+    //std::cout << att.path << std::endl;
+    if (file_map_.find("aa.txt") != file_map_.end())
+        std::cout << "插入成功" << std::endl;
+
     if (stream != nullptr)
         return true;
     return false;
@@ -72,18 +124,16 @@ bool UFD::GetStream(std::string &filename, std::string &mode, FILE *&stream)
 
 bool UFD::DeleteFile(std::string &filename)
 {
-    return (remove(file_map_.at(filename).path.c_str()) == 0);
+    bool flag = (remove(file_map_[filename].path.c_str()) == 0);
+    file_map_.erase(filename);
+    return flag;
 }
 
-bool UFD::CreateNewFile(std::string &filename, std::string &mode, int permission, FILE *&stream)
+void UFD::Insert(std::string &username, std::string &filename, int permission)
 {
-    stream = nullptr;
-    Attributes att(filename, permission);
-    file_map_.insert({filename, att});
-    stream = fopen(file_map_.at(filename).path.c_str(), mode.c_str());
-    if (stream != nullptr)
-        return true;
-    return false;
+    Attributes attb(username, filename, permission);
+    file_map_.emplace(filename, attb);
+    std::cout << "当前ufd大小=" << file_map_.size() << std::endl;
 }
 
 enum class FileOperateMode : int
@@ -123,14 +173,40 @@ private:
      * @return 如果命令可识别,返回true
      */
     bool ParseAndCheckCommand(std::string &command, FileOperateMode &mode);
-    std::unordered_map<std::string, UFD> MFD_;
-    std::map<std::string, StreamAtt> openfiles_;
+    std::unordered_map<std::string, UFD> MFD_;   //username + ufd
+    std::map<std::string, StreamAtt> openfiles_; //filename + mode + stream
 };
-
 
 FileManager::FileManager()
 {
-
+    std::ifstream userstream("D:\\codefile\\cpp_code\\homework\\os\\file\\Users.config");
+    std::ifstream one_user;
+    std::string username, filepath, filename;
+    int permission;
+    while (!userstream.eof())
+    {
+        //读取User.config中的用户
+        username.clear();
+        filepath.clear();
+        userstream >> username;
+        filepath = base + username + "\\" + "file.config";
+        one_user.open(filepath);
+        UFD ufd;
+        //对每一个用户，读取其config文件，创建ufd对象
+        while (!one_user.eof())
+        {
+            filename.clear();
+            one_user >> filename;
+            if (filename.length() == 0)
+                break;
+            //std::cout << filename << std::endl;
+            one_user >> permission;
+            ufd.Insert(username, filename, permission);
+        }
+        MFD_.emplace(username, ufd);
+        one_user.close();
+    }
+    userstream.close();
 }
 
 void FileManager::Main()
@@ -170,8 +246,8 @@ void FileManager::Operator(std::string &user, std::string &filename, FileOperate
     UFD &ufd = MFD_.at(user);
     bool isexist = ufd.IsExist(filename);
     int perm;
-    FILE *fp = nullptr;
-    std::string file_open_mode;
+    std::fstream *stream = nullptr;
+    std::string file_open_mode, str;
     switch (mode)
     {
         //创建新文件,默认用w+打开文件,得到文件句柄
@@ -185,9 +261,10 @@ void FileManager::Operator(std::string &user, std::string &filename, FileOperate
         printf("请输入文件权限:");
         std::cin >> perm;
         file_open_mode = "w"; //创建一个文件只写
-        ufd.CreateNewFile(filename, file_open_mode, perm, fp);
-        openfiles_.insert({filename, StreamAtt(file_open_mode, fp)});
+        ufd.CreateNewFile(user, filename, file_open_mode, perm, stream);
+        openfiles_.insert({filename, StreamAtt(file_open_mode, stream)});
         printf("创建文件成功\n");
+        break;
     }
     case FileOperateMode::Delete:
     {
@@ -196,23 +273,100 @@ void FileManager::Operator(std::string &user, std::string &filename, FileOperate
             printf("文件不存在!\n");
             return;
         }
-        ufd.DeleteFile(filename);
-        printf("删除成功!\n");
+        if (ufd.DeleteFile(filename))
+            printf("删除成功!\n");
+        else
+            printf("删除失败\n");
+        break;
     }
     case FileOperateMode::Open:
     {
+        if (!isexist)
+        {
+            printf("文件不存在!\n");
+            return;
+        }
+        file_open_mode = "open";
+        if (ufd.GetStream(filename, file_open_mode, stream))
+        {
+            printf("打开成功\n");
+            openfiles_.emplace(filename, StreamAtt(file_open_mode, stream));
+        }
+        else
+        {
+            printf("打开失败\n");
+        }
+        break;
     }
     case FileOperateMode::Close:
     {
+        if (openfiles_.find(filename) != openfiles_.end())
+        {
+            openfiles_[filename].second->close();
+            delete openfiles_[filename].second;
+            printf("关闭成功\n");
+            openfiles_.erase(filename);
+        }
+        break;
     }
     case FileOperateMode::Read:
     {
+        if (!isexist)
+        {
+            printf("文件不存在!\n");
+            return;
+        }
+        file_open_mode = "r";
+        if (openfiles_.find(filename) == openfiles_.end())
+        {
+            ufd.GetStream(filename, file_open_mode, stream);
+            openfiles_.emplace(filename, StreamAtt(file_open_mode, stream));
+        }
+        stream = openfiles_[filename].second;
+        while (std::getline(*stream, str))
+            std::cout << str << std::endl;
+        break;
     }
     case FileOperateMode::Write:
     {
+        if (!isexist)
+        {
+            printf("文件不存在!\n");
+            return;
+        }
+        file_open_mode = "w";
+        if (openfiles_.find(filename) == openfiles_.end())
+        {
+            ufd.GetStream(filename, file_open_mode, stream);
+            openfiles_.emplace(filename, StreamAtt(file_open_mode, stream));
+        }
+        stream = openfiles_[filename].second;
+        printf("请输入要写入的内容(换行符结尾)\n");
+        getchar();
+        std::getline(std::cin, str);
+        (*stream) << str << std::endl;
+        printf("写入成功\n");
+        break;
     }
     case FileOperateMode::Append:
     {
+        if (!isexist)
+        {
+            printf("文件不存在!\n");
+            return;
+        }
+        file_open_mode = "a";
+        if (openfiles_.find(filename) == openfiles_.end())
+        {
+            ufd.GetStream(filename, file_open_mode, stream);
+            openfiles_.emplace(filename, StreamAtt(file_open_mode, stream));
+        }
+        stream = openfiles_[filename].second;
+        printf("请输入要写入的内容（换行符结尾）:\n");
+        std::getline(std::cin, str);
+        (*stream) << str << std::endl;
+        printf("写入成功\n");
+        break;
     }
     default:
         break;
@@ -259,3 +413,12 @@ int main()
     system("pause");
     return 0;
 }
+
+/**
+ * Users.config格式：username
+ * {user}.config格式：filename, permission
+
+
+
+
+ */
