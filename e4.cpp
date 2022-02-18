@@ -1,6 +1,6 @@
 /*
  * @Date: 2022-01-04 20:36:44
- * @LastEditTime: 2022-02-18 00:34:30
+ * @LastEditTime: 2022-02-18 09:12:07
  * @Description: OS2  实验4 文件管理系统
  */
 #include <fstream>
@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
+#include <sstream>
 #include <unordered_map>
 #include <vector>
 
@@ -61,6 +62,7 @@ public:
     bool CreateNewFile(std::string &username, std::string &filename, std::string &mode, int permission, std::fstream *&stream);
     bool DeleteFile(std::string& username, std::string &filename);
     void Insert(std::string &username, std::string &filename, int permission);
+    void List();
 
 private:
     std::unordered_map<std::string, Attributes> file_map_; //文件名+文件属性
@@ -143,9 +145,23 @@ bool UFD::DeleteFile(std::string& username ,std::string &filename)
     bool flag = (remove(file_map_[filename].path.c_str()) == 0);
     std::string file_path = base + username + "\\" + "file.config";
     file_map_.erase(filename);
-    std::ofstream out(file_path.c_str());
+    std::fstream config_file(file_path.c_str(), std::ios::in);
     //TO DO
     //找到文件，删除该行
+    std::string data = "";
+    std::string line, temp;
+    while(std::getline(config_file, line))
+    {
+        std::stringstream is(line);
+        is >> temp;
+        if(temp == filename)
+            continue;
+        data += line + "\n";
+    }
+    config_file.close();
+    config_file.open(file_path, std::ios::out | std::ios::trunc);
+    config_file << data;
+    config_file.close();
     return flag;
 }
 
@@ -156,6 +172,15 @@ void UFD::Insert(std::string &username, std::string &filename, int permission)
     std::cout << "当前ufd大小=" << file_map_.size() << std::endl;
 }
 
+void UFD::List()
+{
+    for (auto iter = file_map_.begin(); iter != file_map_.end(); iter++)
+    {
+        std::cout << (*iter).first << "\t" << (*iter).second.perm << std::endl;
+    }
+}
+
+
 enum class FileOperateMode : int
 {
     Create = 0,
@@ -164,7 +189,8 @@ enum class FileOperateMode : int
     Close = 3,
     Read = 4,
     Write = 5,
-    Append = 6
+    Append = 6,
+    List = 7
 };
 
 //一次只允许一个用户，每个用户退出时，清空打开文件目录
@@ -174,6 +200,7 @@ class FileManager
 {
 public:
     FileManager();
+    ~FileManager();
     void Main();
     void Operator(std::string &user, std::string &filename, FileOperateMode &mode);
 
@@ -202,6 +229,7 @@ FileManager::FileManager()
     std::ifstream userstream("D:\\codefile\\cpp_code\\homework\\os\\file\\Users.config");
     std::ifstream one_user;
     std::string username, filepath, filename;
+    UFD rootufd;
     int permission;
     while (!userstream.eof())
     {
@@ -222,11 +250,22 @@ FileManager::FileManager()
             //std::cout << filename << std::endl;
             one_user >> permission;
             ufd.Insert(username, filename, permission);
+            rootufd.Insert(username, filename, 3);
         }
         MFD_.emplace(username, ufd);
         one_user.close();
     }
     userstream.close();
+    MFD_.emplace("root", rootufd);
+}
+
+FileManager::~FileManager()
+{
+    for (auto iter = openfiles_.begin(); iter != openfiles_.end(); iter++)
+    {
+        (*iter).second.second->close();
+        delete (*iter).second.second;
+    }
 }
 
 void FileManager::Main()
@@ -269,6 +308,7 @@ void FileManager::Main()
 void FileManager::Operator(std::string &user, std::string &filename, FileOperateMode &mode)
 {
     //提取UFD
+    
     UFD &ufd = MFD_.at(user);
     bool isexist = ufd.IsExist(filename);
     int perm;
@@ -356,6 +396,8 @@ void FileManager::Operator(std::string &user, std::string &filename, FileOperate
             stream = openfiles_[filename].second;
         while (std::getline(*stream, str))
             std::cout << str << std::endl;
+        stream->close();
+        delete stream;
         break;
     }
     case FileOperateMode::Write:
@@ -366,7 +408,7 @@ void FileManager::Operator(std::string &user, std::string &filename, FileOperate
             return;
         }
         file_open_mode = "w";
-        if (openfiles_.find(filename) == openfiles_.end())
+        //if (openfiles_.find(filename) == openfiles_.end())
         {
             if(!ufd.GetStream(filename, file_open_mode, stream))
             {
@@ -375,13 +417,15 @@ void FileManager::Operator(std::string &user, std::string &filename, FileOperate
             }
             //openfiles_.emplace(filename, StreamAtt(file_open_mode, stream));
         }
-        else
-            stream = openfiles_[filename].second;
+        // else
+        //     stream = openfiles_[filename].second;
         printf("请输入要写入的内容(换行符结尾)\n");
         getchar();
         std::getline(std::cin, str);
         (*stream) << str << std::endl;
         printf("写入成功\n");
+        stream->close();
+        delete stream;
         break;
     }
     case FileOperateMode::Append:
@@ -408,7 +452,13 @@ void FileManager::Operator(std::string &user, std::string &filename, FileOperate
         std::getline(std::cin, str);
         (*stream) << str << std::endl;
         printf("写入成功\n");
+        stream->close();
+        delete stream;
         break;
+    }
+    case FileOperateMode::List:
+    {
+        ufd.List();
     }
     default:
         break;
@@ -437,6 +487,8 @@ bool FileManager::ParseAndCheckCommand(std::string &command, FileOperateMode &mo
         mode = FileOperateMode::Write;
     else if (command == "append")
         mode = FileOperateMode::Append;
+    else if (command == "list")
+        mode = FileOperateMode::List;
     else
     {
         printf("未识别的命令!\n");
